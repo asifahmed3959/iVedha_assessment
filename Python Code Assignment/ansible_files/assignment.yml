@@ -1,0 +1,61 @@
+---
+- name: Perform actions based on the provided variable "action"
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    email_address: "myemail@example.com"  # Replace with the desired email address
+    application_name: "rbcapp1"
+
+  tasks:
+
+    - name: Verify installation of httpd
+      when: action == "verify_install" and inventory_hostname in groups['httpd']
+      block:
+        - name: Check if httpd is installed
+          ansible.builtin.shell: "rpm -q httpd"
+          register: httpd_installed
+          ignore_errors: true
+
+        - name: Install httpd if not installed
+          ansible.builtin.yum:
+            name: httpd
+            state: present
+          when: httpd_installed.rc != 0
+
+    - name: Check disk space and send email if usage > 80%
+      when: action == "check-disk"
+      block:
+        - name: Get disk usage
+          ansible.builtin.shell: "df -h"
+          register: disk_usage
+
+        - name: Send email if disk usage exceeds 80%
+          ansible.builtin.mail:
+            to: "{{ email_address }}"
+            subject: "Disk Usage Alert"
+            body: "{{ disk_usage.stdout_lines }}"
+          when: item.4 | int > 80
+          with_items: "{{ disk_usage.stdout_lines.split('\n')[1:] }}"
+
+    - name: Check status of the application and list of services that are down
+      when: action == "check-status"
+      block:
+        - name: Get application status and list of down services
+          uri:
+            url: "http://localhost:5000/healthcheck"
+            method: GET
+            status_code: 200
+          register: app_status
+
+        - name: Print application status
+          debug:
+            var: app_status.json
+
+        - name: Get list of down services
+          set_fact:
+            down_services: "{{ app_status.json.services | rejectattr('status', 'equalto', 'UP') | map(attribute='name') | list }}"
+
+        - name: Print list of down services
+          debug:
+            var: down_services
